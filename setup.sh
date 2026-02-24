@@ -33,7 +33,7 @@ cp /config/.env.dist /tmp/.env.tmp
 cp /config/.env.app.dist /tmp/.env.app.tmp
 
 # ---- hostname ----
-hostname_default=$(hostname 2>/dev/null || echo "localhost")
+hostname_default="localhost"
 printf "Server hostname [%s]: " "$hostname_default"
 read -r pveHost
 pveHost="${pveHost:-$hostname_default}"
@@ -43,8 +43,8 @@ sed "s/RELYING_PARTY_ID=example.com/RELYING_PARTY_ID=$pveHost/" /tmp/.env.app.tm
 
 # ---- SSL ----
 ssl=""
-while ! printf '%s' "$ssl" | grep -qE "^(self-signed|letsencrypt)$"; do
-    printf "SSL certificate (self-signed/letsencrypt) [self-signed]: "
+while ! printf '%s' "$ssl" | grep -qE "^(self-signed|letsencrypt|reverse-proxy)$"; do
+    printf "SSL mode (self-signed/letsencrypt/reverse-proxy) [self-signed]: "
     read -r ssl
     ssl="${ssl:-self-signed}"
 done
@@ -65,6 +65,11 @@ if [ "$ssl" = "letsencrypt" ]; then
     sed 's@SELF_SIGNED=true@SELF_SIGNED=false@g' /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
     sed "s@LETSENCRYPT_DOMAINS=\"<domain.tld>\"@LETSENCRYPT_DOMAINS=\"$leDomains\"@g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
     sed "s@EMAIL=\"<your mail address>\"@EMAIL=\"$leMail\"@g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
+fi
+
+# reverse-proxy: SSL is handled externally — disable both SSL options in .env
+if [ "$ssl" = "reverse-proxy" ]; then
+    sed 's@SELF_SIGNED=true@SELF_SIGNED=false@g' /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
 fi
 
 # ---- app mode ----
@@ -121,22 +126,38 @@ echo ""
 echo "  1. Optionally review and adjust .env and .env.app"
 echo ""
 echo "  2. Start the application:"
-echo "       docker compose up -d"
+if [ "$ssl" = "reverse-proxy" ]; then
+    echo "       docker compose -f docker-compose.no-ssl.yml up -d"
+    echo ""
+    echo "     Configure your reverse proxy to forward requests to port \${LISTEN_PORT} (default: 80)."
+else
+    echo "       docker compose up -d"
+fi
 echo ""
-echo "  3. Wait for the application to finish setup (git clone + composer, ~2 min),"
-echo "     then run the following commands once:"
+echo "  3. Wait for the application to finish setup (git clone + composer, ~2 min)."
+echo "     You can monitor progress with: docker compose logs -f php"
+echo "     Once you see 'ready to handle connections', run the following command once"
+echo "     to initialize the application (creates the first admin user and loads base templates):"
 echo ""
-echo "     Initialize the application (creates the first admin user):"
-echo "       docker compose exec --user www-data php sh -c 'php fewohbee/bin/console app:first-run'"
-echo ""
-echo "     Load required base templates:"
-echo "       docker compose exec --user www-data php sh -c 'php fewohbee/bin/console doctrine:fixtures:load --append --group templates'"
+if [ "$ssl" = "reverse-proxy" ]; then
+    echo "       docker compose -f docker-compose.no-ssl.yml exec --user www-data php sh -c 'php fewohbee/bin/console app:first-run'"
+else
+    echo "       docker compose exec --user www-data php sh -c 'php fewohbee/bin/console app:first-run'"
+fi
 echo ""
 echo "     Optional: load sample data (guests, reservations, invoices):"
-echo "       docker compose exec --user www-data php sh -c 'php fewohbee/bin/console doctrine:fixtures:load --append --group settings --group customer --group reservation --group invoices'"
+if [ "$ssl" = "reverse-proxy" ]; then
+    echo "       docker compose -f docker-compose.no-ssl.yml exec --user www-data php sh -c 'php fewohbee/bin/console doctrine:fixtures:load --append --group settings --group customer --group reservation --group invoices'"
+else
+    echo "       docker compose exec --user www-data php sh -c 'php fewohbee/bin/console doctrine:fixtures:load --append --group settings --group customer --group reservation --group invoices'"
+fi
 echo ""
-printf "  Application will be available at: https://%s\n" "$pveHost"
-if [ "$ssl" = "self-signed" ]; then
-    echo "  (Accept the browser security warning on first visit - self-signed certificate)"
+if [ "$ssl" = "reverse-proxy" ]; then
+    printf "  Application will be available at: http://%s (via reverse proxy)\n" "$pveHost"
+else
+    printf "  Application will be available at: https://%s\n" "$pveHost"
+    if [ "$ssl" = "self-signed" ]; then
+        echo "  (Accept the browser security warning on first visit - self-signed certificate)"
+    fi
 fi
 echo ""
