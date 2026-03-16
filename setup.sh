@@ -124,7 +124,7 @@ sed "s@APP_SECRET=<secret>@APP_SECRET=$appSecret@g" /tmp/.env.tmp > /tmp/.env.tm
 sed "s@db_password@$mariadbPw@g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
 
 # ---- write final file ----
-mv /tmp/.env.tmp /config/.env
+cp /tmp/.env.tmp /config/.env && rm -f /tmp/.env.tmp
 
 echo ""
 echo "==================================="
