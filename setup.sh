@@ -27,9 +27,21 @@ if [ ! -f "/config/.env.dist" ]; then
     exit 1
 fi
 
+# ---- detect host OS for COMPOSE_FILE separator ----
+# Windows does not allow ':' in filenames; Linux/macOS do.
+if touch "/config/.os_detect:test" 2>/dev/null; then
+    rm -f "/config/.os_detect:test"
+    COMPOSE_SEP=":"
+else
+    COMPOSE_SEP=";"
+fi
+
 # ---- copy template to tmp ----
 umask 0177
 cp /config/.env.dist /tmp/.env.tmp
+
+# set platform-specific COMPOSE_FILE separator
+sed "s@COMPOSE_FILE=docker-compose.yml:docker-compose.override.yml@COMPOSE_FILE=docker-compose.yml${COMPOSE_SEP}docker-compose.override.yml@g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
 
 # ---- hostname ----
 hostname_default="localhost"
@@ -70,7 +82,7 @@ fi
 # and switch to the no-ssl compose file
 if [ "$ssl" = "reverse-proxy" ]; then
     sed 's@SELF_SIGNED=true@SELF_SIGNED=false@g' /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
-    sed 's@COMPOSE_FILE=docker-compose.yml@COMPOSE_FILE=docker-compose.no-ssl.yml@g' /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
+    sed "s@COMPOSE_FILE=docker-compose.yml${COMPOSE_SEP}docker-compose.override.yml@COMPOSE_FILE=docker-compose.no-ssl.yml${COMPOSE_SEP}docker-compose.override.yml@g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
 fi
 
 # ---- app mode ----
