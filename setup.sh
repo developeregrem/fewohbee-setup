@@ -85,20 +85,6 @@ if [ "$ssl" = "reverse-proxy" ]; then
     sed "s@COMPOSE_FILE=docker-compose.yml${COMPOSE_SEP}docker-compose.override.yml@COMPOSE_FILE=docker-compose.no-ssl.yml${COMPOSE_SEP}docker-compose.override.yml@g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
 fi
 
-# ---- app mode ----
-pveEnv=""
-while ! printf '%s' "$pveEnv" | grep -qE "^(prod|dev)$"; do
-    printf "Run mode (prod/dev) [prod]: "
-    read -r pveEnv
-    pveEnv="${pveEnv:-prod}"
-done
-
-# prod uses redis caching
-if [ "$pveEnv" = "prod" ]; then
-    pveEnv="redis"
-fi
-sed "s@APP_ENV=prod@APP_ENV=$pveEnv@g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
-
 # ---- language ----
 pveLang=""
 while ! printf '%s' "$pveLang" | grep -qE "^(de|en)$"; do
@@ -144,13 +130,14 @@ if [ "$ssl" = "reverse-proxy" ]; then
     echo "     Configure your reverse proxy to forward requests to port \${LISTEN_PORT} (default: 80)."
 fi
 echo ""
-echo "  3. Wait for the application to finish setup (git clone + composer, ~2 min)."
-echo "     You can monitor progress with: docker compose logs -f php"
-echo "     Once you see 'ready to handle connections', run the following command once"
+echo "  3. Wait for the php container to become healthy:"
+echo "       docker compose ps"
+echo ""
+echo "     Once 'php' is reported as 'healthy', run the following command once"
 echo "     to initialize the application (creates the first admin user, loads base templates,"
 echo "     and optionally loads sample data):"
 echo ""
-echo "       docker compose exec --user www-data php sh -c 'php fewohbee/bin/console app:first-run'"
+echo "       docker compose exec --user www-data php sh -c 'php bin/console app:first-run'"
 echo ""
 if [ "$ssl" = "reverse-proxy" ]; then
     printf "  Application will be available at: http://%s (via reverse proxy)\n" "$pveHost"
