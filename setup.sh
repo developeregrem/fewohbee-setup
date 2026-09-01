@@ -12,6 +12,39 @@ echo ""
 echo "=== fewohbee Setup ==="
 echo ""
 
+is_valid_port() {
+    case "$1" in
+        ""|*[!0-9]*) return 1 ;;
+    esac
+
+    [ "${#1}" -le 5 ] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+# Stores the validated answer in selected_port.
+prompt_port() {
+    prompt_label="$1"
+    prompt_default="$2"
+    prompt_excluded="${3:-}"
+
+    while true; do
+        printf "%s [%s]: " "$prompt_label" "$prompt_default"
+        read -r selected_port
+        selected_port="${selected_port:-$prompt_default}"
+
+        if ! is_valid_port "$selected_port"; then
+            echo "Please enter a port between 1 and 65535."
+            continue
+        fi
+
+        if [ -n "$prompt_excluded" ] && [ "$selected_port" = "$prompt_excluded" ]; then
+            echo "Please choose a different port than $prompt_excluded."
+            continue
+        fi
+
+        return 0
+    done
+}
+
 # ---- sanity checks ----
 if [ -f "/config/.env" ]; then
     echo "Configuration already exists (.env found). Remove it to reconfigure."
@@ -75,7 +108,7 @@ if [ "$ssl" = "letsencrypt" ]; then
     sed 's@LETSENCRYPT=false@LETSENCRYPT=true@g' /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
     sed 's@SELF_SIGNED=true@SELF_SIGNED=false@g' /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
     sed "s@LETSENCRYPT_DOMAINS=\"<domain.tld>\"@LETSENCRYPT_DOMAINS=\"$leDomains\"@g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
-    sed "s@EMAIL=\"<your mail address>\"@EMAIL=\"$leMail\"@g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
+    sed "s|EMAIL=\"<your mail address>\"|EMAIL=\"$leMail\"|g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
 fi
 
 # reverse-proxy: SSL is handled externally — disable both SSL options in .env
@@ -83,6 +116,31 @@ fi
 if [ "$ssl" = "reverse-proxy" ]; then
     sed 's@SELF_SIGNED=true@SELF_SIGNED=false@g' /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
     sed "s@COMPOSE_FILE=docker-compose.yml${COMPOSE_SEP}docker-compose.override.yml@COMPOSE_FILE=docker-compose.no-ssl.yml${COMPOSE_SEP}docker-compose.override.yml@g" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
+fi
+# ---- host ports ----
+echo ""
+echo "Host port availability cannot be checked reliably from inside the setup container."
+echo "Keep the defaults unless another service already uses these ports on the Docker host."
+prompt_port "HTTP host port (LISTEN_PORT)" 80
+listenPort="$selected_port"
+httpsListenPort=443
+
+if [ "$ssl" != "reverse-proxy" ]; then
+    prompt_port "HTTPS host port (HTTPS_LISTEN_PORT)" 443 "$listenPort"
+    httpsListenPort="$selected_port"
+fi
+
+sed "s@^LISTEN_PORT=.*@LISTEN_PORT=$listenPort@" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
+sed "s@^HTTPS_LISTEN_PORT=.*@HTTPS_LISTEN_PORT=$httpsListenPort@" /tmp/.env.tmp > /tmp/.env.tmp2 && mv /tmp/.env.tmp2 /tmp/.env.tmp
+
+if [ "$ssl" = "letsencrypt" ] && [ "$listenPort" != "80" ]; then
+    echo "Warning: Let's Encrypt HTTP-01 validation requires public port 80."
+    echo "Forward public port 80 to host port $listenPort or certificate issuance will fail."
+fi
+
+if [ "$ssl" = "letsencrypt" ] && [ "$httpsListenPort" != "443" ]; then
+    echo "Note: Browsers use HTTPS port 443 by default."
+    echo "Forward public port 443 to host port $httpsListenPort or include the port in the URL."
 fi
 
 # ---- language ----
@@ -127,7 +185,7 @@ echo "  2. Start the application:"
 echo "       docker compose up -d"
 if [ "$ssl" = "reverse-proxy" ]; then
     echo ""
-    echo "     Configure your reverse proxy to forward requests to port \${LISTEN_PORT} (default: 80)."
+    echo "     Configure your reverse proxy to forward requests to port $listenPort."
 fi
 echo ""
 echo "  3. Wait for the php container to become healthy:"
@@ -142,7 +200,11 @@ echo ""
 if [ "$ssl" = "reverse-proxy" ]; then
     printf "  Application will be available at: http://%s (via reverse proxy)\n" "$pveHost"
 else
-    printf "  Application will be available at: https://%s\n" "$pveHost"
+    if [ "$httpsListenPort" = "443" ]; then
+        printf "  Application will be available at: https://%s\n" "$pveHost"
+    else
+        printf "  Application will be available at: https://%s:%s\n" "$pveHost" "$httpsListenPort"
+    fi
     if [ "$ssl" = "self-signed" ]; then
         echo "  (Accept the browser security warning on first visit - self-signed certificate)"
     fi
